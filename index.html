@@ -34,6 +34,7 @@
       <details class="filter-select cols"><summary>☰ Столбцы</summary><div class="cols-menu" id="colsMenu"></div></details>
       <button class="btn ghost" id="refreshBtn" onclick="load()">🔄 Обновить</button>
       <button class="btn ghost" id="syncBtn" onclick="syncCF()" title="Перекачать чаты из Chatterfy (общая синхронизация для всех дашбордов)">⬇️ Синхронизация</button>
+      <span id="syncInfo" style="font-size:12px;opacity:.75;align-self:center"></span>
       <button class="btn green" onclick="exportCSV()">CSV</button>
     </div>
   </div>
@@ -159,14 +160,15 @@ function render() {
     : `<tr><td colspan="40" class="empty">Нет данных за выбранный период</td></tr>`;
 }
 function sortBy(k) { if (sortKey === k) sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortKey = k; sortDir = 'desc'; } render(); }
-async function syncCF() {
-  syncBtn.disabled = true; syncBtn.textContent = '⏳ Синхронизация...';
-  await fetch('/api/sync');
-  const poll = setInterval(async () => {
-    const s = await (await fetch('/api/status')).json();
-    if (!s.running) { clearInterval(poll); syncBtn.disabled = false; syncBtn.textContent = s.error ? '❌ ' + s.error : '⬇️ Синхронизация'; load(); }
-  }, 3000);
+let wasSyncing = false;
+async function pollSync() {  // the sync is shared: it may have been started by the schedule or from another dashboard
+  let s; try { s = await (await fetch('/api/status')).json(); } catch (e) { return; }
+  syncBtn.disabled = s.running; syncBtn.textContent = s.running ? '⏳ Синхронизация…' : '⬇️ Синхронизация';
+  syncInfo.textContent = s.running ? s.text || '' : s.error ? '❌ ' + s.error : '';
+  if (wasSyncing && !s.running) load();
+  wasSyncing = s.running;
 }
+async function syncCF() { syncBtn.disabled = true; await fetch('/api/sync'); pollSync(); }
 function exportCSV() {
   const q = v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   const lines = [...tbody.querySelectorAll('tr')].map(tr => [...tr.children].map(td => q(td.textContent.trim())).join(','));
@@ -205,7 +207,7 @@ function renderLeads() {
     || '<tr><td colspan="9" class="empty">Нет диалогов за выбранный период</td></tr>';
 }
 
-window.onload = () => { showTab(); setRange(30); setInterval(load, 60 * 60 * 1000); };
+window.onload = () => { showTab(); setRange(30); setInterval(load, 60 * 60 * 1000); pollSync(); setInterval(pollSync, 5000); };
 </script>
 </body>
 </html>
