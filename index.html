@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dmavens · {{TITLE}}</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<aside class="sidebar">
+  <div class="logo"><span>📊</span>Dmavens · {{TITLE}}</div>
+  <nav class="nav">
+    <a href="#stats" data-tab="stats">📈 Статистика</a>
+    <a href="#leads" data-tab="leads">💬 Диалоги</a>
+  </nav>
+  <div class="side-foot" id="meta"></div>
+</aside>
+<main class="main">
+
+<section class="tab" id="tab-stats">
+  <div class="topbar">
+    <h1>Статистика по источникам</h1>
+    <div class="filters">
+      <input type="date" class="filter-select" id="dateFrom" onchange="load()">
+      <span>—</span>
+      <input type="date" class="filter-select" id="dateTo" onchange="load()">
+      <button class="filter-select" onclick="setRange(0)">Сегодня</button>
+      <button class="filter-select" onclick="setRange(1,1)">Вчера</button>
+      <button class="filter-select" onclick="setRange(7)">Неделя</button>
+      <button class="filter-select" onclick="setRange(30)">Месяц</button>
+      <select class="filter-select" id="campFilter" onchange="render()"><option value="">Все кампании</option></select>
+      <select class="filter-select" id="botFilter" onchange="render()"><option value="">Все боты</option></select>
+      <input class="input" id="search" placeholder="кампания, источник" oninput="render()">
+      <details class="filter-select cols"><summary>☰ Столбцы</summary><div class="cols-menu" id="colsMenu"></div></details>
+      <button class="btn ghost" id="refreshBtn" onclick="load()">🔄 Обновить</button>
+      <button class="btn ghost" id="syncBtn" onclick="syncCF()" title="Перекачать чаты из Chatterfy (общая синхронизация для всех дашбордов)">⬇️ Синхронизация</button>
+      <button class="btn green" onclick="exportCSV()">CSV</button>
+    </div>
+  </div>
+  <div class="kpis" id="summary"></div>
+  <div class="table-wrap">
+    <table><thead id="thead"></thead><tbody id="tbody"><tr><td colspan="40" class="empty">Загрузка...</td></tr></tbody></table>
+  </div>
+</section>
+
+<section class="tab" id="tab-leads">
+  <div class="topbar">
+    <h1>Диалоги <span class="tag tag-grey" id="leadCount"></span></h1>
+    <div class="filters">
+      <input type="date" class="filter-select" id="leadFrom" onchange="loadLeads()">
+      <span>—</span>
+      <input type="date" class="filter-select" id="leadTo" onchange="loadLeads()">
+      <button class="filter-select" onclick="setLeadRange(7)">Неделя</button>
+      <button class="filter-select" onclick="setLeadRange(30)">Месяц</button>
+      <button class="filter-select" onclick="setLeadRange(365)">Год</button>
+      <input class="input" id="leadSearch" placeholder="кампания, источник, имя, @username, бот" oninput="renderLeads()">
+      <label class="filter-select"><input type="checkbox" class="leadF" value="reg" checked onchange="renderLeads()"> рега</label>
+      <label class="filter-select"><input type="checkbox" class="leadF" value="dep" checked onchange="renderLeads()"> деп</label>
+      <label class="filter-select"><input type="checkbox" class="leadF" value="Reg (тег)" checked onchange="renderLeads()"> REG тег</label>
+      <label class="filter-select"><input type="checkbox" class="leadF" value="Dep (тег)" checked onchange="renderLeads()"> DEP тег</label>
+      <label class="filter-select"><input type="checkbox" class="leadF" value="Потенциал (тег)" checked onchange="renderLeads()"> Потенциал тег</label>
+      <button class="btn ghost" onclick="loadLeads()">🔄 Обновить</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table><thead><tr class="hdr"><th>Старт чата</th><th>Чат</th><th>Бот</th><th>Имя</th><th>Кампания</th><th>Источник</th><th>События</th><th>Теги</th><th>Депозиты $</th></tr></thead>
+      <tbody id="leadBody"><tr><td colspan="9" class="empty">Загрузка...</td></tr></tbody></table>
+  </div>
+</section>
+
+</main>
+<script>
+const money = v => '$' + (v || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const num = v => (v || 0).toLocaleString('en-US');
+const pct = v => (v || 0) + '%';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const j = async url => { const r = await fetch(url); const d = await r.json(); if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status); return d; };
+
+// ---------- tabs ----------
+function showTab() {
+  const t = location.hash.slice(1) || 'stats';
+  document.querySelectorAll('.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + t));
+  document.querySelectorAll('.nav a[data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === t));
+  if (t === 'leads' && !leadFrom.value) setLeadRange(30);
+}
+window.addEventListener('hashchange', showTab);
+
+// ---------- stats: one row per Chatterfy source; columns come from the sync service (CF_COLS / CF_TAGS / CF_CHAIN there) ----------
+const allCols = () => {
+  const ev = data.chain, sh = e => data.short[e] || e;
+  return [...data.cols.map(e => ({k:'cf:' + e, l:e, g:'funnel', f:num})),
+    ...ev.slice(1).map((e, i) => ({k:`cr:${ev[i]}>${e}`, l:`${sh(ev[i])}→${sh(e)}`, g:'cr', f:pct})),
+    {k:'cf_sale_sum', l:'Сумма', g:'dep', f:money}, {k:'cf_fd_sum', l:'Сумма FD', g:'dep', f:money}, {k:'cf_rd_sum', l:'Сумма RD', g:'dep', f:money}];
+};
+const GROUPS = {funnel:'Chatterfy', cr:'Конверсии %', dep:'Депозиты $'};
+let hidden = new Set(JSON.parse(localStorage.hiddenCols || '[]'));  // column keys switched off in the ☰ menu
+const cols = () => allCols().filter(c => !hidden.has(c.k));
+function toggleCol(k, on) { on ? hidden.delete(k) : hidden.add(k); localStorage.hiddenCols = JSON.stringify([...hidden]); render(); }
+function renderColsMenu() {
+  let g = null;
+  colsMenu.innerHTML = allCols().map(c => (g === c.g ? '' : (g = c.g, `<b>${GROUPS[g]}</b>`))
+    + `<label><input type="checkbox" ${hidden.has(c.k) ? '' : 'checked'} onchange="toggleCol('${c.k}', this.checked)">${c.l}</label>`).join('');
+}
+let data = null, sortKey = 'cf_sale_sum', sortDir = 'desc';
+
+const iso = d => d.toISOString().slice(0, 10);
+const now = () => new Date(Date.now() + 3 * 3600e3);  // Moscow day (as in Chatterfy), used with the UTC getters below
+function setRange(daysBack, toBack = 0) {
+  const t = now(), from = new Date(t), to = new Date(t);
+  from.setUTCDate(t.getUTCDate() - daysBack); to.setUTCDate(t.getUTCDate() - toBack);
+  dateFrom.value = iso(from); dateTo.value = iso(to); load();
+}
+function derive(r) {  // conversions of each funnel step vs the previous one, FD = all deposits - repeat ones
+  const ev = data.chain, p = (a, b) => b ? +(a / b * 100).toFixed(2) : 0;
+  ev.slice(1).forEach((e, i) => r[`cr:${ev[i]}>${e}`] = p(r['cf:' + e] || 0, r['cf:' + ev[i]] || 0));
+  r.cf_fd_sum = +((r.cf_sale_sum || 0) - (r.cf_rd_sum || 0)).toFixed(2);
+  return r;
+}
+function sum(rows) {
+  const t = {cf_sale_sum: 0, cf_rd_sum: 0};
+  data.cols.forEach(e => t['cf:' + e] = 0);
+  for (const r of rows) for (const k in t) t[k] += r[k] || 0;
+  return derive(t);
+}
+async function load() {
+  const btn = refreshBtn; btn.disabled = true; btn.textContent = '⏳ Загрузка...';
+  try {
+    data = await j(`/api/funnel?date_from=${dateFrom.value}&date_to=${dateTo.value}`);
+    data.rows = Object.entries(data.funnel).map(([utm, r]) => derive({...r, utm, campaign: r.campaign || '—', source: r.source || utm, bot: r.bot || '—'}));
+    fillSelect(campFilter, 'campaign'); fillSelect(botFilter, 'bot');
+    renderColsMenu();
+    meta.innerHTML = `синхронизация: ${data.synced || 'идёт первая…'}<br>дни по Москве, как в Chatterfy`;
+    render();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="40" class="empty" style="color:var(--bad)">Ошибка: ${esc(e.message)}</td></tr>`;
+  } finally { btn.disabled = false; btn.textContent = '🔄 Обновить'; }
+}
+function fillSelect(sel, key) {
+  const cur = sel.value, vals = [...new Set(data.rows.map(r => r[key]))].sort();
+  sel.innerHTML = `<option value="">${sel.options[0].text}</option>` + vals.map(v => `<option>${esc(v)}</option>`).join('');
+  sel.value = vals.includes(cur) ? cur : '';
+}
+function render() {
+  if (!data) return;
+  const COLS = cols(), q = search.value.trim().toLowerCase();
+  const rows = data.rows.filter(r => (!campFilter.value || r.campaign === campFilter.value) && (!botFilter.value || r.bot === botFilter.value)
+    && (!q || `${r.campaign} ${r.source} ${r.utm}`.toLowerCase().includes(q)));
+  rows.sort((a, b) => { const x = a[sortKey], y = b[sortKey]; const d = typeof x === 'string' ? x.localeCompare(y) : (x || 0) - (y || 0); return sortDir === 'asc' ? d : -d; });
+  const t = sum(rows), ev = data.chain;
+  summary.innerHTML = [
+    ...ev.map((e, i) => [e, num(t['cf:' + e]), i ? `${data.short[ev[i - 1]]}→${data.short[e]} ${pct(t[`cr:${ev[i - 1]}>${e}`])}` : 'чел']),
+    ['Сумма депозитов', money(t.cf_sale_sum), `FD ${money(t.cf_fd_sum)} · RD ${money(t.cf_rd_sum)}`],
+  ].map(([a, b, c]) => `<div class="kpi"><div class="kpi-title">${a}</div><div class="kpi-value">${b}</div><div class="kpi-sub">${c}</div></div>`).join('');
+  const groupTh = COLS.reduce((a, c) => (a.length && a[a.length - 1][0] === c.g ? a[a.length - 1][1]++ : a.push([c.g, 1]), a), [])
+    .map(([g, n]) => `<th colspan="${n}" class="g-${g}">${GROUPS[g]}</th>`).join('');
+  const th = (k, l, cls = '') => `<th class="${cls} ${sortKey === k ? 'sorted-' + sortDir : ''}" onclick="sortBy('${k}')">${l}</th>`;
+  thead.innerHTML = `<tr class="grp"><th colspan="4"></th>${groupTh}</tr><tr class="hdr">${th('campaign', 'Кампания')}${th('source', 'Источник')}${th('utm', 'ID')}${th('bot', 'Бот')}${COLS.map(c => th(c.k, c.l, 'g-' + c.g)).join('')}</tr>`;
+  const td = (c, r) => `<td class="g-${c.g}">${c.f(r[c.k])}</td>`;
+  tbody.innerHTML = rows.length ? rows.map(r => `<tr><td><span class="tag tag-acc">${esc(r.campaign)}</span></td><td class="title-cell" style="color:inherit" title="${esc(r.source)}"><b>${esc(r.source)}</b></td><td><span class="tag tag-utm">${esc(r.utm)}</span></td><td><span class="tag tag-bot">${esc(r.bot)}</span></td>${COLS.map(c => td(c, r)).join('')}</tr>`).join('')
+    + `<tr class="total"><td colspan="4" style="text-align:center">ИТОГО (${rows.length} источников)</td>${COLS.map(c => td(c, t)).join('')}</tr>`
+    : `<tr><td colspan="40" class="empty">Нет данных за выбранный период</td></tr>`;
+}
+function sortBy(k) { if (sortKey === k) sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortKey = k; sortDir = 'desc'; } render(); }
+async function syncCF() {
+  syncBtn.disabled = true; syncBtn.textContent = '⏳ Синхронизация...';
+  await fetch('/api/sync');
+  const poll = setInterval(async () => {
+    const s = await (await fetch('/api/status')).json();
+    if (!s.running) { clearInterval(poll); syncBtn.disabled = false; syncBtn.textContent = s.error ? '❌ ' + s.error : '⬇️ Синхронизация'; load(); }
+  }, 3000);
+}
+function exportCSV() {
+  const q = v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  const lines = [...tbody.querySelectorAll('tr')].map(tr => [...tr.children].map(td => q(td.textContent.trim())).join(','));
+  const head = ['Кампания', 'Источник', 'ID', 'Бот', ...cols().map(c => c.l)].map(q).join(',');
+  const a = Object.assign(document.createElement('a'), {href: URL.createObjectURL(new Blob(['﻿' + [head, ...lines].join('\r\n')], {type: 'text/csv;charset=utf-8;'})), download: `{{TITLE}}_${dateFrom.value}_${dateTo.value}.csv`});
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+}
+
+// ---------- leads (Диалоги) ----------
+let leadRows = [];
+function setLeadRange(daysBack) {
+  const t = now(), from = new Date(t); from.setUTCDate(t.getUTCDate() - daysBack);
+  leadFrom.value = iso(from); leadTo.value = iso(t); loadLeads();
+}
+async function loadLeads() {
+  leadBody.innerHTML = '<tr><td colspan="9" class="empty">Загрузка...</td></tr>';
+  try { leadRows = (await j(`/api/leads?date_from=${leadFrom.value}&date_to=${leadTo.value}`)).rows; renderLeads(); }
+  catch (e) { leadBody.innerHTML = `<tr><td colspan="9" class="empty" style="color:var(--bad)">Ошибка: ${esc(e.message)}</td></tr>`; }
+}
+function renderLeads() {
+  const q = leadSearch.value.trim().toLowerCase();
+  const on = [...document.querySelectorAll('.leadF:checked')].map(c => c.value);
+  const dates = r => [r.reg_day, r.dep_day, ...Object.values(r.tags)].filter(Boolean);
+  const rows = leadRows.filter(r => (on.includes('reg') && r.reg_day || on.includes('dep') && r.dep_day || Object.keys(r.tags).some(t => on.includes(t)))
+    && (!q || `${r.utm} ${r.name} ${r.username} ${r.bot} ${r.campaign || ''} ${r.source || ''}`.toLowerCase().includes(q)));
+  rows.sort((a, b) => Math.max(...dates(b).map(Date.parse)) - Math.max(...dates(a).map(Date.parse)));  // latest event first
+  leadCount.textContent = rows.length;
+  leadBody.innerHTML = rows.map(r => `<tr>
+    <td>${r.day}</td><td>${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener">Chatterfy ↗</a>` : ''}</td>
+    <td><span class="tag tag-bot">${esc(r.bot)}</span></td>
+    <td>${esc(r.name)}${r.username ? ` <small>@${esc(r.username)}</small>` : ''}</td>
+    <td><span class="tag tag-acc">${esc(r.campaign)}</span></td><td class="title-cell" title="${esc(r.utm)}">${esc(r.source || r.utm)}</td>
+    <td>${r.reg_day ? `<span class="tag tag-ok">рега ${r.reg_day.slice(5)}</span> ` : ''}${r.dep_day ? `<span class="tag tag-ok">деп ${r.dep_day.slice(5)}</span>` : ''}</td>
+    <td>${Object.entries(r.tags).map(([t, d]) => `<span class="tag tag-grey">${esc(t.replace(' (тег)', ''))} ${d.slice(5)}</span>`).join(' ')}</td>
+    <td>${r.sale_sum ? money(r.sale_sum) + (r.rd_sum ? ` <small>RD ${money(r.rd_sum)}</small>` : '') : ''}</td></tr>`).join('')
+    || '<tr><td colspan="9" class="empty">Нет диалогов за выбранный период</td></tr>';
+}
+
+window.onload = () => { showTab(); setRange(30); setInterval(load, 60 * 60 * 1000); };
+</script>
+</body>
+</html>

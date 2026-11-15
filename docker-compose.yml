@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      CF_URL: ${CF_URL:-http://chatterfy:8080}
+      CAMPAIGN_MATCH: ${CAMPAIGN_MATCH}
+      TITLE: ${TITLE}
+    ports:
+      - "${PORT}:8080"
+    networks: [stat]
+
+networks:
+  stat:
+    name: dmavens-stat-net   # создаётся проектом dmavens-stat-cf (его поднимать первым)
+    external: true

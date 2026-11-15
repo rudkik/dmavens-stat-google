@@ -1,0 +1,6 @@
+.env
+.env.example
+.idea
+README.md
+__pycache__
+.git
