@@ -1,5 +1,6 @@
 .PHONY: up down restart logs ps
 
+
 COMPOSE = docker compose
 
 .env:
