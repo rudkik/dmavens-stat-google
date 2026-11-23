@@ -29,7 +29,7 @@
       <button class="filter-select" onclick="setRange(7)">Неделя</button>
       <button class="filter-select" onclick="setRange(30)">Месяц</button>
       <select class="filter-select" id="campFilter" onchange="render()"><option value="">Все кампании</option></select>
-      <select class="filter-select" id="botFilter" onchange="render()"><option value="">Все боты</option></select>
+      <details class="filter-select cols"><summary>Все боты</summary><div class="cols-menu bots-menu" id="botMenu" data-fn="render"></div></details>
       <input class="input" id="search" placeholder="кампания, источник" oninput="render()">
       <details class="filter-select cols"><summary>☰ Столбцы</summary><div class="cols-menu" id="colsMenu"></div></details>
       <button class="btn ghost" id="refreshBtn" onclick="load()">🔄 Обновить</button>
@@ -51,9 +51,12 @@
       <input type="date" class="filter-select" id="leadFrom" onchange="loadLeads()">
       <span>—</span>
       <input type="date" class="filter-select" id="leadTo" onchange="loadLeads()">
+      <button class="filter-select" onclick="setLeadRange(0)">Сегодня</button>
+      <button class="filter-select" onclick="setLeadRange(1,1)">Вчера</button>
       <button class="filter-select" onclick="setLeadRange(7)">Неделя</button>
       <button class="filter-select" onclick="setLeadRange(30)">Месяц</button>
       <button class="filter-select" onclick="setLeadRange(365)">Год</button>
+      <details class="filter-select cols"><summary>Все боты</summary><div class="cols-menu bots-menu" id="leadBotMenu" data-fn="renderLeads"></div></details>
       <input class="input" id="leadSearch" placeholder="кампания, источник, имя, @username, бот" oninput="renderLeads()">
       <label class="filter-select"><input type="checkbox" class="leadF" value="reg" checked onchange="renderLeads()"> рега</label>
       <label class="filter-select"><input type="checkbox" class="leadF" value="dep" checked onchange="renderLeads()"> деп</label>
@@ -80,7 +83,7 @@ function showTab() {
   const t = location.hash.slice(1) || 'stats';
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + t));
   document.querySelectorAll('.nav a[data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === t));
-  if (t === 'leads' && !leadFrom.value) setLeadRange(30);
+  if (t === 'leads' && !leadFrom.value) setLeadRange(7);
 }
 window.addEventListener('hashchange', showTab);
 
@@ -126,7 +129,7 @@ async function load() {
   try {
     data = await j(`/api/funnel?date_from=${dateFrom.value}&date_to=${dateTo.value}`);
     data.rows = Object.entries(data.funnel).map(([utm, r]) => derive({...r, utm, campaign: r.campaign || '—', source: r.source || utm, bot: r.bot || '—'}));
-    fillSelect(campFilter, 'campaign'); fillSelect(botFilter, 'bot');
+    fillSelect(campFilter, 'campaign'); fillBots(botMenu, data.rows);
     renderColsMenu();
     meta.innerHTML = `синхронизация: ${data.synced || 'идёт первая…'}<br>дни по Москве, как в Chatterfy`;
     render();
@@ -139,10 +142,20 @@ function fillSelect(sel, key) {
   sel.innerHTML = `<option value="">${sel.options[0].text}</option>` + vals.map(v => `<option>${esc(v)}</option>`).join('');
   sel.value = vals.includes(cur) ? cur : '';
 }
+// bot multi-select (☰-style checkbox menu); nothing checked = all bots; the choice is remembered per page
+const botsOf = m => [...m.querySelectorAll(':checked')].map(c => c.value);
+const botOk = (m, b) => { const s = botsOf(m); return !s.length || s.includes(b); };
+function fillBots(m, rows) {
+  const cur = JSON.parse(localStorage['bots_' + m.id] || '[]'), bots = [...new Set(rows.map(r => r.bot))].sort();
+  m.innerHTML = bots.map(b => `<label><input type="checkbox" value="${esc(b)}" ${cur.includes(b) ? 'checked' : ''} onchange="pickBots(this.closest('.bots-menu'))">${esc(b)}</label>`).join('') || '<small>нет ботов</small>';
+  botLabel(m);
+}
+function botLabel(m) { const n = botsOf(m).length; m.previousElementSibling.textContent = n ? `Боты: ${n} ▾` : 'Все боты ▾'; }
+function pickBots(m) { localStorage['bots_' + m.id] = JSON.stringify(botsOf(m)); botLabel(m); window[m.dataset.fn](); }
 function render() {
   if (!data) return;
   const COLS = cols(), q = search.value.trim().toLowerCase();
-  const rows = data.rows.filter(r => (!campFilter.value || r.campaign === campFilter.value) && (!botFilter.value || r.bot === botFilter.value)
+  const rows = data.rows.filter(r => (!campFilter.value || r.campaign === campFilter.value) && botOk(botMenu, r.bot)
     && (!q || `${r.campaign} ${r.source} ${r.utm}`.toLowerCase().includes(q)));
   rows.sort((a, b) => { const x = a[sortKey], y = b[sortKey]; const d = typeof x === 'string' ? x.localeCompare(y) : (x || 0) - (y || 0); return sortDir === 'asc' ? d : -d; });
   const t = sum(rows), ev = data.chain;
@@ -179,13 +192,14 @@ function exportCSV() {
 
 // ---------- leads (Диалоги) ----------
 let leadRows = [];
-function setLeadRange(daysBack) {
-  const t = now(), from = new Date(t); from.setUTCDate(t.getUTCDate() - daysBack);
-  leadFrom.value = iso(from); leadTo.value = iso(t); loadLeads();
+function setLeadRange(daysBack, toBack = 0) {
+  const t = now(), from = new Date(t), to = new Date(t);
+  from.setUTCDate(t.getUTCDate() - daysBack); to.setUTCDate(t.getUTCDate() - toBack);
+  leadFrom.value = iso(from); leadTo.value = iso(to); loadLeads();
 }
 async function loadLeads() {
   leadBody.innerHTML = '<tr><td colspan="9" class="empty">Загрузка...</td></tr>';
-  try { leadRows = (await j(`/api/leads?date_from=${leadFrom.value}&date_to=${leadTo.value}`)).rows; renderLeads(); }
+  try { leadRows = (await j(`/api/leads?date_from=${leadFrom.value}&date_to=${leadTo.value}`)).rows; fillBots(leadBotMenu, leadRows); renderLeads(); }
   catch (e) { leadBody.innerHTML = `<tr><td colspan="9" class="empty" style="color:var(--bad)">Ошибка: ${esc(e.message)}</td></tr>`; }
 }
 function renderLeads() {
@@ -193,7 +207,7 @@ function renderLeads() {
   const on = [...document.querySelectorAll('.leadF:checked')].map(c => c.value);
   const dates = r => [r.reg_day, r.dep_day, ...Object.values(r.tags)].filter(Boolean);
   const rows = leadRows.filter(r => (on.includes('reg') && r.reg_day || on.includes('dep') && r.dep_day || Object.keys(r.tags).some(t => on.includes(t)))
-    && (!q || `${r.utm} ${r.name} ${r.username} ${r.bot} ${r.campaign || ''} ${r.source || ''}`.toLowerCase().includes(q)));
+    && botOk(leadBotMenu, r.bot) && (!q || `${r.utm} ${r.name} ${r.username} ${r.bot} ${r.campaign || ''} ${r.source || ''}`.toLowerCase().includes(q)));
   rows.sort((a, b) => Math.max(...dates(b).map(Date.parse)) - Math.max(...dates(a).map(Date.parse)));  // latest event first
   leadCount.textContent = rows.length;
   leadBody.innerHTML = rows.map(r => `<tr>
@@ -207,7 +221,7 @@ function renderLeads() {
     || '<tr><td colspan="9" class="empty">Нет диалогов за выбранный период</td></tr>';
 }
 
-window.onload = () => { showTab(); setRange(30); setInterval(load, 60 * 60 * 1000); pollSync(); setInterval(pollSync, 5000); };
+window.onload = () => { showTab(); setRange(7); setInterval(load, 60 * 60 * 1000); pollSync(); setInterval(pollSync, 5000); };
 </script>
 </body>
 </html>

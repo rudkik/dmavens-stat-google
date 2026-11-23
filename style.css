@@ -88,3 +88,4 @@ details.cols summary::-webkit-details-marker{display:none}
 .link:hover{text-decoration:underline}
 #msg{margin-bottom:12px;font-size:13px;min-height:18px}
 @media (max-width:800px){body{flex-direction:column}.sidebar{width:auto;height:auto;position:static;flex-direction:row;align-items:center;flex-wrap:wrap}.logo{padding:0 10px 0 0}.nav{display:flex;gap:4px}.side-foot{display:none}.main{padding:16px}}
+.bots-menu{left:0;right:auto;grid-template-columns:repeat(2,auto);max-height:60vh;overflow:auto}
