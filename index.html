@@ -26,8 +26,10 @@
       <input type="date" class="filter-select" id="dateTo" onchange="load()">
       <button class="filter-select" onclick="setRange(0)">Сегодня</button>
       <button class="filter-select" onclick="setRange(1,1)">Вчера</button>
-      <button class="filter-select" onclick="setRange(7)">Неделя</button>
-      <button class="filter-select" onclick="setRange(30)">Месяц</button>
+      <button class="filter-select" onclick="setPeriod('week')">Текущая неделя</button>
+      <button class="filter-select" onclick="setPeriod('lastweek')">Прошлая неделя</button>
+      <button class="filter-select" onclick="setPeriod('month')">Текущий месяц</button>
+      <button class="filter-select" onclick="setPeriod('lastmonth')">Прошлый месяц</button>
       <select class="filter-select" id="campFilter" onchange="render()"><option value="">Все кампании</option></select>
       <details class="filter-select cols"><summary>Все боты</summary><div class="cols-menu bots-menu" id="botMenu" data-fn="render"></div></details>
       <input class="input" id="search" placeholder="кампания, источник" oninput="render()">
@@ -53,8 +55,10 @@
       <input type="date" class="filter-select" id="leadTo" onchange="loadLeads()">
       <button class="filter-select" onclick="setLeadRange(0)">Сегодня</button>
       <button class="filter-select" onclick="setLeadRange(1,1)">Вчера</button>
-      <button class="filter-select" onclick="setLeadRange(7)">Неделя</button>
-      <button class="filter-select" onclick="setLeadRange(30)">Месяц</button>
+      <button class="filter-select" onclick="setLeadPeriod('week')">Текущая неделя</button>
+      <button class="filter-select" onclick="setLeadPeriod('lastweek')">Прошлая неделя</button>
+      <button class="filter-select" onclick="setLeadPeriod('month')">Текущий месяц</button>
+      <button class="filter-select" onclick="setLeadPeriod('lastmonth')">Прошлый месяц</button>
       <button class="filter-select" onclick="setLeadRange(365)">Год</button>
       <details class="filter-select cols"><summary>Все боты</summary><div class="cols-menu bots-menu" id="leadBotMenu" data-fn="renderLeads"></div></details>
       <input class="input" id="leadSearch" placeholder="кампания, источник, имя, @username, бот" oninput="renderLeads()">
@@ -62,6 +66,7 @@
       <label class="filter-select"><input type="checkbox" class="leadF" value="dep" checked onchange="renderLeads()"> деп</label>
       <label class="filter-select"><input type="checkbox" class="leadF" value="Потенциал (тег)" checked onchange="renderLeads()"> Потенциал тег</label>
       <button class="btn ghost" onclick="loadLeads()">🔄 Обновить</button>
+      <button class="btn green" onclick="exportLeads()">CSV</button>
     </div>
   </div>
   <div class="table-wrap">
@@ -83,7 +88,7 @@ function showTab() {
   const t = location.hash.slice(1) || 'stats';
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + t));
   document.querySelectorAll('.nav a[data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === t));
-  if (t === 'leads' && !leadFrom.value) setLeadRange(7);
+  if (t === 'leads' && !leadFrom.value) setLeadPeriod('lastweek');
 }
 window.addEventListener('hashchange', showTab);
 
@@ -107,6 +112,14 @@ let data = null, sortKey = 'cf_sale_sum', sortDir = 'desc';
 
 const iso = d => d.toISOString().slice(0, 10);
 const now = () => new Date(Date.now() + 3 * 3600e3);  // Moscow day (as in Chatterfy), used with the UTC getters below
+function period(p) {  // calendar periods by Moscow day, weeks start on Monday
+  const t = now(), y = t.getUTCFullYear(), m = t.getUTCMonth(), d = t.getUTCDate(), dow = (t.getUTCDay() + 6) % 7;
+  const D = (yy, mm, dd) => iso(new Date(Date.UTC(yy, mm, dd)));  // Date.UTC rolls over day 0 / negative days
+  return {week: [D(y, m, d - dow), D(y, m, d)], lastweek: [D(y, m, d - dow - 7), D(y, m, d - dow - 1)],
+          month: [D(y, m, 1), D(y, m, d)], lastmonth: [D(y, m - 1, 1), D(y, m, 0)]}[p];
+}
+function setPeriod(p) { [dateFrom.value, dateTo.value] = period(p); load(); }
+function setLeadPeriod(p) { [leadFrom.value, leadTo.value] = period(p); loadLeads(); }
 function setRange(daysBack, toBack = 0) {
   const t = now(), from = new Date(t), to = new Date(t);
   from.setUTCDate(t.getUTCDate() - daysBack); to.setUTCDate(t.getUTCDate() - toBack);
@@ -191,6 +204,14 @@ function exportCSV() {
 }
 
 // ---------- leads (Диалоги) ----------
+function exportLeads() {  // rows as currently filtered; the chat cell exports its Chatterfy link
+  const q = v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  const cell = td => q(td.querySelector('a')?.href || td.textContent.trim());
+  const head = [...leadBody.closest('table').querySelectorAll('thead th')].map(cell).join(',');
+  const lines = [...leadBody.querySelectorAll('tr')].filter(tr => !tr.querySelector('.empty')).map(tr => [...tr.children].map(cell).join(','));
+  const a = Object.assign(document.createElement('a'), {href: URL.createObjectURL(new Blob(['\ufeff' + [head, ...lines].join('\r\n')], {type: 'text/csv;charset=utf-8;'})), download: `{{TITLE}}_dialogs_${leadFrom.value}_${leadTo.value}.csv`});
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+}
 let leadRows = [];
 function setLeadRange(daysBack, toBack = 0) {
   const t = now(), from = new Date(t), to = new Date(t);
@@ -221,7 +242,7 @@ function renderLeads() {
     || '<tr><td colspan="9" class="empty">Нет диалогов за выбранный период</td></tr>';
 }
 
-window.onload = () => { showTab(); setRange(7); setInterval(load, 60 * 60 * 1000); pollSync(); setInterval(pollSync, 5000); };
+window.onload = () => { showTab(); setPeriod('lastweek'); setInterval(load, 60 * 60 * 1000); pollSync(); setInterval(pollSync, 5000); };
 </script>
 </body>
 </html>
