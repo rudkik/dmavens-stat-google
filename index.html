@@ -111,8 +111,8 @@ function renderColsMenu() {
 let data = null, sortKey = 'cf_sale_sum', sortDir = 'desc';
 
 const iso = d => d.toISOString().slice(0, 10);
-const now = () => new Date(Date.now() + 3 * 3600e3);  // Moscow day (as in Chatterfy), used with the UTC getters below
-function period(p) {  // calendar periods by Moscow day, weeks start on Monday
+const now = () => new Date(Date.now() + 5 * 3600e3);  // UTC+5 day, as in Chatterfy (CF_TZ in dmavens-stat-cf), used with the UTC getters below
+function period(p) {  // calendar periods by UTC+5 day, weeks start on Monday
   const t = now(), y = t.getUTCFullYear(), m = t.getUTCMonth(), d = t.getUTCDate(), dow = (t.getUTCDay() + 6) % 7;
   const D = (yy, mm, dd) => iso(new Date(Date.UTC(yy, mm, dd)));  // Date.UTC rolls over day 0 / negative days
   return {week: [D(y, m, d - dow), D(y, m, d)], lastweek: [D(y, m, d - dow - 7), D(y, m, d - dow - 1)],
@@ -144,7 +144,7 @@ async function load() {
     data.rows = Object.entries(data.funnel).map(([utm, r]) => derive({...r, utm, campaign: r.campaign || '—', source: r.source || utm, bot: r.bot || '—'}));
     fillSelect(campFilter, 'campaign'); fillBots(botMenu, data.rows);
     renderColsMenu();
-    meta.innerHTML = `синхронизация: ${data.synced || 'идёт первая…'}<br>дни по Москве, как в Chatterfy`;
+    meta.innerHTML = `синхронизация: ${data.synced || 'идёт первая…'}<br>дни по UTC+5, как в Chatterfy`;
     render();
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="40" class="empty" style="color:var(--bad)">Ошибка: ${esc(e.message)}</td></tr>`;
